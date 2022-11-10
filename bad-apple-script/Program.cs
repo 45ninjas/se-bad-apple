@@ -22,6 +22,7 @@ namespace IngameScript
 {
     partial class Program : MyGridProgram
     {
+        const int HASHRATE = 250000;
         const int WIDTH = 96;
         const char BLACK = '';
         const char WHITE = '';
@@ -29,10 +30,13 @@ namespace IngameScript
         IMyTextSurface surface;
         IMyTextSurface info;
 
+        IMySoundBlock sound;
+
         int frame = 0;
-        int delayCounter = 0;
-        string[] frames;
+        List<string> frames;
+
         List<uint> frameBuffer = new List<uint>();
+        IEnumerator<bool> job;
 
         public Program()
         {
@@ -41,16 +45,54 @@ namespace IngameScript
             if (block == null)
                 throw new Exception("LCD named 'Bad Apple LCD' not found");
             surface = block.GetSurface(0);
+            surface.WriteText("");
+
+            // Get the info screen.
             info = Me.GetSurface(0);
-            Echo("Found LCD.");
+            info.WriteText("");
 
-            // Split the frames on newlines.
-            Echo("Reading Frames.");
-            frames = Me.CustomData.Split(Environment.NewLine.ToCharArray());
+            // Get the sound block.
+            sound = GridTerminalSystem.GetBlockWithName("Bad Apple Sound") as IMySoundBlock;
+            if (sound == null)
+                throw new Exception("No Sound Block named 'Bad Apple Sound'");
+
+            // Get the storage blocks.
+            var group = GridTerminalSystem.GetBlockGroupWithName("Bad Apple Memory");
+            if (group == null)
+                throw new Exception("No Group named 'Bad Apple Memory'");
+            var storageBlocks = new List<IMyTimerBlock>();
+            group.GetBlocksOfType(storageBlocks);
+
+            // Order the blocks by Name.
+            storageBlocks.OrderBy(o => o.CustomName).ToList();
+
+            Echo($"Storage blocks: {storageBlocks.Count}");
+
+            // Start the loader.
+            job = Loader(storageBlocks);
+            Runtime.UpdateFrequency = UpdateFrequency.Once;
 
 
-            Echo($"Found {frames.Length} frames.");
-            Runtime.UpdateFrequency = UpdateFrequency.Update1;
+        }
+
+        public void Main(string argument, UpdateType updateSource)
+        {
+            if ((updateSource & (UpdateType.Terminal | UpdateType.Trigger)) != 0 && job == null)
+            {
+                Runtime.UpdateFrequency |= UpdateFrequency.Once;
+                job = Player();
+            }
+            // Are we updating every tick?
+            if ((updateSource & UpdateType.Once) != 0 && job != null)
+            {
+                if (job.MoveNext())
+                    Runtime.UpdateFrequency |= UpdateFrequency.Once;
+                else
+                {
+                    job.Dispose();
+                    job = null;
+                }
+            }
         }
 
         public void DrawFrame(ref List<uint> frame, IMyTextSurface surface)
@@ -78,8 +120,9 @@ namespace IngameScript
             }
             surface.WriteText(sb);
         }
-        public void DecodeFrame(int frame, ref List<uint> buffer)
+        public void DecodeFrame(ref List<uint> buffer)
         {
+            // Decode the raw frame into the buffer.
             const uint OFFSET = 0x00B0;
             buffer.Clear();
             foreach (var ch in frames[frame])
@@ -87,28 +130,62 @@ namespace IngameScript
                 buffer.Add(ch - OFFSET);
             }
         }
-
-        public void Main(string argument, UpdateType updateSource)
+        public IEnumerator<bool> Player()
         {
-            if (delayCounter == 0)
+            // Stop the sound block and clear the screen.
+            sound.Stop();
+            surface.WriteText("");
+
+            // Wait 1 second.
+            for (int i = 0; i < 60; i++)
+                yield return true;
+
+            // Play the sound block.
+            sound.Play();
+
+            frame = 0;
+            while (frame < frames.Count)
             {
-                info.WriteText($"F {frame}\nT {frame / 30.0:00.00}");
-                DecodeFrame(frame, ref frameBuffer);
-            }
-            else if (delayCounter == 1)
-            {
+                // Decode the next frame.
+                DecodeFrame(ref frameBuffer);
+                info.WriteText($"Frame {frame}\nTime {frame / 30.0:00.00}");
+                yield return true;
+
+                // Draw whatever's in the buffer.
                 DrawFrame(ref frameBuffer, surface);
                 frame++;
-
-                if (frame >= frames.Length)
-                {
-                    frame = 0;
-                }
+                yield return true;
             }
-
-            delayCounter++;
-            if (delayCounter > 1)
-                delayCounter = 0;
         }
+
+        public IEnumerator<bool> Loader(List<IMyTimerBlock> memoryBlocks) {
+            // Draw the VLC icon (caus why not!).
+            surface.WriteText(VLC_ICON);
+            yield return true;
+
+            // Init our memory.
+            surface.WriteText("\n\nMemory Init.", true);
+
+            frames = new List<string>();
+            
+            // Go over each memory block in the group.
+            foreach (var memoryBlock in memoryBlocks)
+            {
+                surface.WriteText($"\n{memoryBlock.CustomName}", true);
+
+                var lines = memoryBlock.CustomData.Split(Environment.NewLine.ToCharArray());
+
+                foreach (var line in lines)
+                    frames.Add(line);
+
+                surface.WriteText($" [{lines.Length:000}]", true);
+                yield return true;
+                yield return true;
+                yield return true;
+                yield return true;
+            }
+        }
+
+        const string VLC_ICON = "\n\n\n\n\n\n\n\n\n\n" + "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n";
     }
 }

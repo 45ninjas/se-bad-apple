@@ -1,7 +1,6 @@
 extern crate bmp;
 use glob::glob;
 fn main() {
-
     // Iterate over all frames in frames directory.
     for entry in glob("../frames/*.bmp").expect("Failed to read glob pattern.") {
         match entry {
