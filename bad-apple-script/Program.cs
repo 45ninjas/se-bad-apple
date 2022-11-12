@@ -22,18 +22,19 @@ namespace IngameScript
 {
     partial class Program : MyGridProgram
     {
-        const int HASHRATE = 250000;
         const int WIDTH = 96;
         const char BLACK = '';
         const char WHITE = '';
 
-        IMyTextSurface surface;
+        IMyTextSurface screen;
         IMyTextSurface info;
 
         IMySoundBlock sound;
 
         int frame = 0;
         List<string> frames;
+
+        StringBuilder sb = new StringBuilder();
 
         List<uint> frameBuffer = new List<uint>();
         IEnumerator<bool> job;
@@ -44,8 +45,8 @@ namespace IngameScript
             var block = GridTerminalSystem.GetBlockWithName("Bad Apple LCD") as IMyTextSurfaceProvider;
             if (block == null)
                 throw new Exception("LCD named 'Bad Apple LCD' not found");
-            surface = block.GetSurface(0);
-            surface.WriteText("");
+            screen = block.GetSurface(0);
+            screen.WriteText("");
 
             // Get the info screen.
             info = Me.GetSurface(0);
@@ -99,7 +100,7 @@ namespace IngameScript
         {
             int x = 0;
             bool black = true;
-            var sb = new StringBuilder();
+            sb.Clear();
 
             for (int fi = 0; fi < frame.Count; fi++)
             {
@@ -125,16 +126,14 @@ namespace IngameScript
             // Decode the raw frame into the buffer.
             const uint OFFSET = 0x00B0;
             buffer.Clear();
-            foreach (var ch in frames[frame])
-            {
-                buffer.Add(ch - OFFSET);
-            }
+            for (int i = 0; i < frames[frame].Length; i++)
+                buffer.Add(frames[frame][i] - OFFSET);
         }
         public IEnumerator<bool> Player()
         {
             // Stop the sound block and clear the screen.
             sound.Stop();
-            surface.WriteText("");
+            screen.WriteText("");
 
             // Wait 1 second.
             for (int i = 0; i < 60; i++)
@@ -152,38 +151,72 @@ namespace IngameScript
                 yield return true;
 
                 // Draw whatever's in the buffer.
-                DrawFrame(ref frameBuffer, surface);
+                DrawFrame(ref frameBuffer, screen);
                 frame++;
                 yield return true;
             }
         }
 
-        public IEnumerator<bool> Loader(List<IMyTimerBlock> memoryBlocks) {
+        public IEnumerator<bool> Loader(List<IMyTimerBlock> memoryBlocks)
+        {
             // Draw the VLC icon (caus why not!).
-            surface.WriteText(VLC_ICON);
+            screen.WriteText(VLC_ICON);
             yield return true;
 
             // Init our memory.
-            surface.WriteText("\n\nMemory Init.", true);
+            LogLn("Memory Init");
 
             frames = new List<string>();
-            
-            // Go over each memory block in the group.
-            foreach (var memoryBlock in memoryBlocks)
-            {
-                surface.WriteText($"\n{memoryBlock.CustomName}", true);
+            var hashes = new int[memoryBlocks.Count];
 
+            IMyTimerBlock memoryBlock = null;
+
+            for (int i = 0; i < memoryBlocks.Count; i++)
+            {
+                memoryBlock = memoryBlocks[i];
+
+                // Verify the custom data of this block doesn't already exist.
+                {
+                    var hash = memoryBlock.CustomData.GetHashCode();
+                    if (hashes.Contains(hash))
+                        LogLn($"WANING: {memoryBlock.CustomData}'s data already exists.");
+                    hashes[i] = hash;
+                }
+
+                Log(memoryBlock.CustomName);
+
+                // Get all the lines from this block's custom data.
                 var lines = memoryBlock.CustomData.Split(Environment.NewLine.ToCharArray());
 
-                foreach (var line in lines)
-                    frames.Add(line);
+                // Log the first comment if one exists.
+                if (lines[0].StartsWith("#"))
+                    Log($" {lines[0]}");
+                else
+                    Log(" Unknown");
 
-                surface.WriteText($" [{lines.Length:000}]", true);
-                yield return true;
-                yield return true;
-                yield return true;
+                // Add each line to our frames that don't start with # (skip comments).
+                foreach (var line in lines)
+                    if (!line.StartsWith("#"))
+                        frames.Add(line);
+
+                LogLn($" [{lines.Length:000}]");
                 yield return true;
             }
+            LogLn($"Loaded {frames.Count()} frames");
+            Echo($"Loaded {frames.Count()} frames");
+            LogLn($"from {memoryBlocks.Count()} memory blocks.");
+            Echo($"from {memoryBlocks.Count()} memory blocks.");
+        }
+
+        void Log(string msg)
+        {
+            if (info != null)
+                info.WriteText(msg, true);
+        }
+        void LogLn(string msg)
+        {
+            if (info != null)
+                info.WriteText(msg + '\n', true);
         }
 
         const string VLC_ICON = "\n\n\n\n\n\n\n\n\n\n" + "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n";
